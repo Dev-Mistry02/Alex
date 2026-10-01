@@ -68,7 +68,7 @@ const Feedback = () => {
                 setError("");
 
                 const response = await fetch(
-                    `/api/feedback`
+                    `${API_URL}/api/feedback`
                 );
 
                 if (!response.ok) {
@@ -386,7 +386,7 @@ const Feedback = () => {
 
             const response =
                 await fetch(
-                    `/api/feedback` , 
+                    `${API_URL}/api/feedback`,
                     {
                         method: "POST",
 
