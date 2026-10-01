@@ -386,7 +386,7 @@ const Feedback = () => {
 
             const response =
                 await fetch(
-                    `/api/feedback`,
+                    `/api/feedback` , 
                     {
                         method: "POST",
 
