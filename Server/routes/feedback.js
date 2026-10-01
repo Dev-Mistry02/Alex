@@ -3,11 +3,6 @@ import Feedback from "../models/Feedback.js";
 
 const router = express.Router();
 
-/*
-GET /api/feedback
-
-Return all approved reviews.
-*/
 router.get("/", async (req, res) => {
   try {
     const feedback = await Feedback.find({ approved: true })
@@ -34,11 +29,6 @@ router.get("/", async (req, res) => {
 });
 
 
-/*
-POST /api/feedback
-
-Create a new review.
-*/
 router.post("/", async (req, res) => {
   try {
     const { name, rating, message } = req.body;
@@ -47,7 +37,6 @@ router.post("/", async (req, res) => {
     const cleanMessage = String(message || "").trim();
     const cleanRating = Number(rating);
 
-    // Validation
     if (cleanName.length < 2) {
       return res.status(400).json({
         message: "Please enter your name.",
@@ -112,11 +101,6 @@ router.post("/", async (req, res) => {
 });
 
 
-/*
-DELETE /api/feedback/:id
-
-Useful later for admin panel.
-*/
 router.delete("/:id", async (req, res) => {
   try {
     const deleted = await Feedback.findByIdAndDelete(req.params.id);

@@ -17,6 +17,7 @@ import { portfolioData } from './data/portfolio';
 import { servicesData } from './data/services';
 import WelcomeScreen from './components/WelcomeScreen';
 import { ThemeProvider } from './context/ThemeContext';
+import MouseClickAnimation from './components/MouseClickAnimation';
 
 
 
@@ -141,6 +142,7 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider>
+      <MouseClickAnimation />
       <AppContent />
     </ThemeProvider>
   );

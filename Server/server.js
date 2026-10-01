@@ -13,22 +13,10 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-/*
-========================================
-CONFIG
-========================================
-*/
-
 const PORT = process.env.PORT || 5000;
 
 const CLIENT_URL =
   process.env.CLIENT_URL || "http://localhost:5173";
-
-/*
-========================================
-SOCKET.IO
-========================================
-*/
 
 const io = new Server(httpServer, {
   cors: {
@@ -39,11 +27,7 @@ const io = new Server(httpServer, {
 
 app.set("io", io);
 
-/*
-========================================
-MIDDLEWARE
-========================================
-*/
+
 
 app.use(
   cors({
@@ -54,11 +38,7 @@ app.use(
 
 app.use(express.json());
 
-/*
-========================================
-HEALTH CHECK
-========================================
-*/
+
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -67,19 +47,9 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-/*
-========================================
-ROUTES
-========================================
-*/
 
 app.use("/api/feedback", feedbackRoutes);
 
-/*
-========================================
-SOCKET CONNECTION
-========================================
-*/
 
 io.on("connection", (socket) => {
   console.log("Client connected:", socket.id);
@@ -88,12 +58,6 @@ io.on("connection", (socket) => {
     console.log("Client disconnected:", socket.id);
   });
 });
-
-/*
-========================================
-MONGODB CHANGE STREAM
-========================================
-*/
 
 const startMongoChangeStream = async () => {
   try {

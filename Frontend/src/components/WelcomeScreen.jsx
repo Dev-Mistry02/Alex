@@ -87,7 +87,7 @@ const WelcomeScreen = ({ onComplete }) => {
         <button
           type="button"
           onClick={enterSite}
-          className="group mt-9 inline-flex items-center gap-3 rounded-full px-7 py-4 bg-[#111111] text-white font-heading font-semibold text-sm shadow-[0_15px_40px_rgba(0,0,0,0.15)] hover:-translate-y-1 hover:shadow-[0_20px_50px_rgba(0,0,0,0.2)] transition-all duration-300 animate-welcome-up animation-delay-400"
+          className="group mt-9 inline-flex items-center gap-3 rounded-full px-7 py-4 bg-[#111111] text-black font-heading font-semibold text-sm shadow-[0_15px_40px_rgba(0,0,0,0.15)] hover:-translate-y-1 hover:shadow-[0_20px_50px_rgba(0,0,0,0.2)] transition-all duration-300 animate-welcome-up animation-delay-400"
         >
           <span>EXPLORE STUDIO</span>
 
