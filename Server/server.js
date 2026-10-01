@@ -13,7 +13,7 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 
 const CLIENT_URL =
   process.env.CLIENT_URL || "http://localhost:5173";
@@ -330,23 +330,19 @@ const startServer = async () => {
     ----------------------------------------
     */
 
-    httpServer.listen(
-      PORT,
-      "0.0.0.0",
-      () => {
-        console.log(
-          `Server running at PORT:${PORT}`
-        );
+    httpServer.once("error", (error) => {
+      console.error(
+        `Unable to start the server on port ${PORT}:`,
+        error
+      );
+      process.exit(1);
+    });
 
-        console.log(
-          `API: http://localhost:${PORT}`
-        );
-
-        console.log(
-          `Socket.IO realtime enabled`
-        );
-      }
-    );
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running at PORT:${PORT}`);
+      console.log(`API: http://localhost:${PORT}`);
+      console.log(`Socket.IO realtime enabled`);
+    });
   } catch (error) {
     console.error(
       "Server startup failed:",

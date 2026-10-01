@@ -3,7 +3,9 @@ import { io } from "socket.io-client";
 
 const API_URL =
     import.meta.env.VITE_API_URL ||
-    "http://localhost:5000";
+    (import.meta.env.DEV
+        ? "http://localhost:5000"
+        : "https://alex-wdu9.onrender.com");
 
 const Feedback = () => {
     const sectionRef = useRef(null);
@@ -66,7 +68,7 @@ const Feedback = () => {
                 setError("");
 
                 const response = await fetch(
-                    `${API_URL}/api/feedback`
+                    `/api/feedback`
                 );
 
                 if (!response.ok) {
@@ -384,7 +386,7 @@ const Feedback = () => {
 
             const response =
                 await fetch(
-                    `${API_URL}/api/feedback`,
+                    `/api/feedback`,
                     {
                         method: "POST",
 
