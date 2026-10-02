@@ -1,11 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
-const API_URL =
+const API_URL = (
     import.meta.env.VITE_API_URL ||
-    (import.meta.env.DEV
-        ? "http://localhost:5000"
-        : "https://alex-wdu9.onrender.com");
+    "https://alex-wdu9.onrender.com"
+).replace(/\/+$/, "");
+
+const REQUEST_TIMEOUT = 15000;
+
+const normalizeFeedback = (item) => {
+    if (!item || !item.id) {
+        return null;
+    }
+
+    return {
+        id: String(item.id),
+        name: String(item.name || "Anonymous"),
+        rating: Number(item.rating) || 0,
+        message: String(item.message || ""),
+        created_at: item.created_at || item.createdAt || null,
+        approved: item.approved !== false,
+    };
+};
+
+const sortFeedback = (items) =>
+    [...items].sort((a, b) => {
+        const first = Date.parse(a.created_at || "") || 0;
+        const second = Date.parse(b.created_at || "") || 0;
+        return second - first;
+    });
+
+const mergeFeedback = (current, incoming) => {
+    const normalized = normalizeFeedback(incoming);
+    if (!normalized || normalized.approved === false) {
+        return current;
+    }
+
+    const withoutExisting = current.filter(
+        (item) => String(item.id) !== normalized.id
+    );
+
+    return sortFeedback([normalized, ...withoutExisting]);
+};
 
 const Feedback = () => {
     const sectionRef = useRef(null);
@@ -61,46 +97,60 @@ const Feedback = () => {
 
     useEffect(() => {
         let mounted = true;
+        const controller = new AbortController();
+        const timeout = setTimeout(
+            () => controller.abort(),
+            REQUEST_TIMEOUT
+        );
 
         const loadFeedback = async () => {
-            try {
-                setLoading(true);
-                setError("");
+            setLoading(true);
+            setError("");
 
+            try {
                 const response = await fetch(
-                    `${API_URL}/api/feedback`
+                    `${API_URL}/api/feedback`,
+                    {
+                        signal: controller.signal,
+                        headers: { Accept: "application/json" },
+                    }
                 );
+                const data = await response.json().catch(() => null);
 
                 if (!response.ok) {
                     throw new Error(
-                        "Failed to load feedback"
+                        data?.message ||
+                            `Unable to load feedback (${response.status}).`
                     );
                 }
 
-                const data =
-                    await response.json();
+                if (!Array.isArray(data)) {
+                    throw new Error("The feedback response was invalid.");
+                }
 
                 if (mounted) {
                     setFeedback(
-                        Array.isArray(data)
-                            ? data
-                            : []
+                        sortFeedback(
+                            data
+                                .map(normalizeFeedback)
+                                .filter(Boolean)
+                                .filter((item) => item.approved)
+                        )
                     );
                 }
             } catch (err) {
-                console.error(
-                    "Failed to load feedback:",
-                    err
-                );
+                if (!mounted) {
+                    return;
+                }
 
-                if (mounted) {
-                    setError(
-                        "Unable to load feedback right now."
-                    );
-
-                    setFeedback([]);
+                if (err.name === "AbortError") {
+                    setError("Feedback is taking too long to load. Please try again.");
+                } else {
+                    console.error("Failed to load feedback:", err);
+                    setError(err.message || "Unable to load feedback right now.");
                 }
             } finally {
+                clearTimeout(timeout);
                 if (mounted) {
                     setLoading(false);
                 }
@@ -111,194 +161,61 @@ const Feedback = () => {
 
         return () => {
             mounted = false;
+            clearTimeout(timeout);
+            controller.abort();
         };
     }, []);
 
-
     useEffect(() => {
         const socket = io(API_URL, {
-            transports: ["websocket", "polling"],
+            transports: ["polling", "websocket"],
             reconnection: true,
-            reconnectionAttempts: Infinity,
+            reconnectionAttempts: 5,
             reconnectionDelay: 1000,
+            timeout: REQUEST_TIMEOUT,
         });
 
-
-        socket.on("connect", () => {
-            console.log(
-                "Feedback realtime connected:",
-                socket.id
-            );
-        });
-
-        socket.on(
-            "disconnect",
-            (reason) => {
-                console.log(
-                    "Feedback realtime disconnected:",
-                    reason
-                );
-            }
-        );
-
-        socket.on(
-            "connect_error",
-            (err) => {
-                console.error(
-                    "Feedback realtime connection error:",
-                    err.message
-                );
-            }
-        );
-
-
-        const handleCreated = (
-            newReview
-        ) => {
-            if (!newReview?.id) {
-                return;
-            }
-
-            if (
-                newReview.approved === false
-            ) {
-                return;
-            }
-
-            setFeedback((current) => {
-                const exists =
-                    current.some(
-                        (item) =>
-                            String(item.id) ===
-                            String(
-                                newReview.id
-                            )
-                    );
-
-                if (exists) {
-                    return current;
-                }
-
-                return [
-                    newReview,
-                    ...current,
-                ];
-            });
+        const handleCreated = (review) => {
+            setFeedback((current) => mergeFeedback(current, review));
         };
 
-
-
-        const handleUpdated = (
-            updatedReview
-        ) => {
-            if (!updatedReview?.id) {
+        const handleUpdated = (review) => {
+            if (review?.approved === false) {
+                setFeedback((current) =>
+                    current.filter(
+                        (item) =>
+                            String(item.id) !== String(review.id)
+                    )
+                );
                 return;
             }
 
-            setFeedback((current) => {
-                const updatedId = String(
-                    updatedReview.id
-                );
-
-
-                if (
-                    updatedReview.approved ===
-                    false
-                ) {
-                    return current.filter(
-                        (item) =>
-                            String(
-                                item.id
-                            ) !== updatedId
-                    );
-                }
-
-
-
-                const exists =
-                    current.some(
-                        (item) =>
-                            String(
-                                item.id
-                            ) === updatedId
-                    );
-
-
-                if (exists) {
-                    return current.map(
-                        (item) =>
-                            String(
-                                item.id
-                            ) === updatedId
-                                ? updatedReview
-                                : item
-                    );
-                }
-
-
-                return [
-                    updatedReview,
-                    ...current,
-                ];
-            });
+            setFeedback((current) => mergeFeedback(current, review));
         };
 
-        const handleDeleted = (
-            deletedReview
-        ) => {
-            const deletedId =
-                deletedReview?.id;
-
-            if (!deletedId) {
+        const handleDeleted = ({ id } = {}) => {
+            if (!id) {
                 return;
             }
-
-            console.log(
-                "Removing deleted feedback:",
-                deletedId
-            );
 
             setFeedback((current) =>
                 current.filter(
-                    (item) =>
-                        String(item.id) !==
-                        String(deletedId)
+                    (item) => String(item.id) !== String(id)
                 )
             );
         };
 
-
-        socket.on(
-            "feedback:created",
-            handleCreated
-        );
-
-        socket.on(
-            "feedback:updated",
-            handleUpdated
-        );
-
-        socket.on(
-            "feedback:deleted",
-            handleDeleted
-        );
+        socket.on("feedback:created", handleCreated);
+        socket.on("feedback:updated", handleUpdated);
+        socket.on("feedback:deleted", handleDeleted);
+        socket.on("connect_error", (err) => {
+            console.warn("Feedback realtime unavailable:", err.message);
+        });
 
         return () => {
-            socket.off(
-                "feedback:created",
-                handleCreated
-            );
-
-            socket.off(
-                "feedback:updated",
-                handleUpdated
-            );
-
-            socket.off(
-                "feedback:deleted",
-                handleDeleted
-            );
-
+            socket.off("feedback:created", handleCreated);
+            socket.off("feedback:updated", handleUpdated);
+            socket.off("feedback:deleted", handleDeleted);
             socket.disconnect();
         };
     }, []);
@@ -381,41 +298,47 @@ const Feedback = () => {
             return;
         }
 
+        const controller = new AbortController();
+        const timeout = setTimeout(
+            () => controller.abort(),
+            REQUEST_TIMEOUT
+        );
+
         try {
             setSubmitting(true);
 
-            const response =
-                await fetch(
-                    `${API_URL}/api/feedback`,
-                    {
-                        method: "POST",
-
-                        headers: {
-                            "Content-Type":
-                                "application/json",
-                        },
-
-                        body: JSON.stringify({
-                            name: cleanName,
-                            rating: Number(
-                                rating
-                            ),
-                            message:
-                                cleanMessage,
-                        }),
-                    }
-                );
-
-            const data =
-                await response.json();
+            const response = await fetch(
+                `${API_URL}/api/feedback`,
+                {
+                    method: "POST",
+                    signal: controller.signal,
+                    headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                    },
+                    body: JSON.stringify({
+                        name: cleanName,
+                        rating: Number(rating),
+                        message: cleanMessage,
+                    }),
+                }
+            );
+            const data = await response.json().catch(() => null);
 
             if (!response.ok) {
                 throw new Error(
-                    data.message ||
-                    "Something went wrong."
+                    data?.message || "Something went wrong."
                 );
             }
 
+            const createdReview = normalizeFeedback(data);
+            if (!createdReview) {
+                throw new Error("The server returned an invalid review.");
+            }
+
+            setFeedback((current) =>
+                mergeFeedback(current, createdReview)
+            );
 
             setName("");
             setMessage("");
@@ -429,10 +352,12 @@ const Feedback = () => {
             );
 
             setError(
-                err.message ||
-                "Something went wrong. Please try again."
+                err.name === "AbortError"
+                    ? "Submission is taking too long. Please check the server and try again."
+                    : err.message || "Something went wrong. Please try again."
             );
         } finally {
+            clearTimeout(timeout);
             setSubmitting(false);
         }
     };
@@ -1160,6 +1085,18 @@ const Feedback = () => {
                                 )
                             )}
 
+                        </div>
+
+                    ) : error && feedback.length === 0 ? (
+
+                        <div className="text-center py-12 rounded-3xl bg-white/70 border border-red-100">
+                            <div className="text-3xl mb-3">!</div>
+                            <p className="font-heading font-semibold text-red-600">
+                                Feedback is temporarily unavailable.
+                            </p>
+                            <p className="font-body text-sm text-text-muted mt-1">
+                                Please try again in a moment.
+                            </p>
                         </div>
 
                     ) : feedback.length ===

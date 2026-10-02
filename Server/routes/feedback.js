@@ -1,22 +1,39 @@
 import express from "express";
+import mongoose from "mongoose";
 import Feedback from "../models/Feedback.js";
 
 const router = express.Router();
 
+router.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      message: "Feedback service is temporarily unavailable.",
+    });
+  }
+
+  next();
+});
+
 router.get("/", async (req, res) => {
   try {
-    const feedback = await Feedback.find({ approved: true })
-      .sort({ createdAt: -1 })
-      .lean();
+    const feedback = await Feedback.find({
+      approved: { $ne: false },
+    }).lean();
 
-    const formatted = feedback.map((item) => ({
-      id: item._id.toString(),
-      name: item.name,
-      rating: item.rating,
-      message: item.message,
-      created_at: item.createdAt,
-      approved: item.approved,
-    }));
+    const formatted = feedback
+      .map((item) => ({
+        id: item._id.toString(),
+        name: item.name,
+        rating: item.rating,
+        message: item.message,
+        created_at: item.createdAt || item.created_at || null,
+        approved: item.approved !== false,
+      }))
+      .sort((first, second) => {
+        const firstDate = Date.parse(first.created_at || "") || 0;
+        const secondDate = Date.parse(second.created_at || "") || 0;
+        return secondDate - firstDate;
+      });
 
     res.json(formatted);
   } catch (error) {
@@ -31,7 +48,7 @@ router.get("/", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { name, rating, message } = req.body;
+    const { name, rating, message } = req.body || {};
 
     const cleanName = String(name || "").trim();
     const cleanMessage = String(message || "").trim();
@@ -49,7 +66,11 @@ router.post("/", async (req, res) => {
       });
     }
 
-    if (cleanRating < 1 || cleanRating > 5) {
+    if (
+      !Number.isInteger(cleanRating) ||
+      cleanRating < 1 ||
+      cleanRating > 5
+    ) {
       return res.status(400).json({
         message: "Please select a rating.",
       });

@@ -7,7 +7,10 @@ const connectDb = async () => {
         throw new Error("MONGO_URI is missing from .env");
     }
 
-    await mongoose.connect(mongoUri);
+    await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: 8000,
+        connectTimeoutMS: 8000,
+    });
     console.log("Db connected");
 }
 

@@ -15,12 +15,21 @@ const httpServer = createServer(app);
 
 const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 
-const CLIENT_URL =
-  process.env.CLIENT_URL || "http://localhost:5173";
+const configuredClientUrls = (process.env.CLIENT_URL || "")
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin) =>
+  !origin ||
+  configuredClientUrls.length === 0 ||
+  /^https?:\/\/localhost:\d+$/.test(origin) ||
+  /^https?:\/\/127\.0\.0\.1:\d+$/.test(origin) ||
+  configuredClientUrls.includes(origin);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: CLIENT_URL,
+    origin: isAllowedOrigin,
     methods: ["GET", "POST", "DELETE", "PUT"],
   },
 });
@@ -31,7 +40,7 @@ app.set("io", io);
 
 app.use(
   cors({
-    origin: CLIENT_URL,
+    origin: isAllowedOrigin,
     methods: ["GET", "POST", "DELETE", "PUT"],
   })
 );
@@ -44,6 +53,10 @@ app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     message: "ALEX Graphic Studio API is running",
+    database:
+      mongoose.connection.readyState === 1
+        ? "connected"
+        : "unavailable",
   });
 });
 
@@ -303,54 +316,30 @@ START SERVER
 */
 
 const startServer = async () => {
-  try {
-    /*
-    ----------------------------------------
-    Connect MongoDB FIRST
-    ----------------------------------------
-    */
-
-    await connectDb();
-
-    console.log(
-      "MongoDB connected successfully"
-    );
-
-    /*
-    ----------------------------------------
-    Start Change Stream AFTER MongoDB
-    ----------------------------------------
-    */
-
-    await startMongoChangeStream();
-
-    /*
-    ----------------------------------------
-    Start HTTP Server
-    ----------------------------------------
-    */
-
-    httpServer.once("error", (error) => {
-      console.error(
-        `Unable to start the server on port ${PORT}:`,
-        error
-      );
-      process.exit(1);
-    });
-
-    httpServer.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running at PORT:${PORT}`);
-      console.log(`API: http://localhost:${PORT}`);
-      console.log(`Socket.IO realtime enabled`);
-    });
-  } catch (error) {
+  httpServer.once("error", (error) => {
     console.error(
-      "Server startup failed:",
+      `Unable to start the server on port ${PORT}:`,
       error
     );
-
     process.exit(1);
-  }
+  });
+
+  httpServer.listen(PORT, "0.0.0.0", async () => {
+    console.log(`Server running at PORT:${PORT}`);
+    console.log(`API: http://localhost:${PORT}`);
+    console.log(`Socket.IO realtime enabled`);
+
+    try {
+      await connectDb();
+      console.log("MongoDB connected successfully");
+      await startMongoChangeStream();
+    } catch (error) {
+      console.error(
+        "MongoDB startup failed. API remains available:",
+        error
+      );
+    }
+  });
 };
 
 /*
