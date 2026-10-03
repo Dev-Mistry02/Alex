@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim();
 const API_URL = (
-    import.meta.env.VITE_API_URL ||
-    "https://alex-wdu9.onrender.com"
+    configuredApiUrl ||
+    (import.meta.env.DEV ? "" : "https://alex-wdu9.onrender.com")
 ).replace(/\/+$/, "");
 
 const REQUEST_TIMEOUT = 45000;
-const RETRY_DELAY = 1500;
+const RETRY_DELAY = 2000;
 
 const wait = (duration) =>
     new Promise((resolve) => setTimeout(resolve, duration));
@@ -117,6 +118,7 @@ const Feedback = () => {
 
     const [feedback, setFeedback] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [apiAvailable, setApiAvailable] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [submitted, setSubmitted] = useState(false);
     const [error, setError] = useState("");
@@ -157,7 +159,7 @@ const Feedback = () => {
 
             try {
                 const { response, data } = await requestFeedback({
-                    retries: 2,
+                    retries: 5,
                 });
 
                 if (!response.ok) {
@@ -180,6 +182,7 @@ const Feedback = () => {
                                 .filter((item) => item.approved)
                         )
                     );
+                    setApiAvailable(true);
                 }
             } catch (err) {
                 if (!mounted) {
@@ -190,7 +193,11 @@ const Feedback = () => {
                     setError("Feedback is taking too long to load. Please try again.");
                 } else {
                     console.error("Failed to load feedback:", err);
-                    setError(err.message || "Unable to load feedback right now.");
+                    setError(
+                        err instanceof TypeError && !API_URL
+                            ? "Unable to connect to the local API. Start the backend on port 5000 and try again."
+                            : err.message || "Unable to load feedback right now."
+                    );
                 }
             } finally {
                 if (mounted) {
@@ -207,11 +214,13 @@ const Feedback = () => {
     }, []);
 
     useEffect(() => {
+        if (!apiAvailable) {
+            return undefined;
+        }
+
         const socket = io(API_URL, {
-            transports: ["polling", "websocket"],
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
+            transports: ["polling"],
+            reconnection: false,
             timeout: REQUEST_TIMEOUT,
         });
 
@@ -250,6 +259,7 @@ const Feedback = () => {
         socket.on("feedback:deleted", handleDeleted);
         socket.on("connect_error", (err) => {
             console.warn("Feedback realtime unavailable:", err.message);
+            socket.disconnect();
         });
 
         return () => {
@@ -258,7 +268,7 @@ const Feedback = () => {
             socket.off("feedback:deleted", handleDeleted);
             socket.disconnect();
         };
-    }, []);
+    }, [apiAvailable]);
 
 
     const averageRating = useMemo(() => {
@@ -342,7 +352,7 @@ const Feedback = () => {
             setSubmitting(true);
 
             const { response, data } = await requestFeedback({
-                retries: 2,
+                retries: 5,
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
