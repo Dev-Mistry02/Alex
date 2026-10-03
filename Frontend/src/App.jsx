@@ -118,7 +118,7 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, []);
 
-  const pathname = window.location.pathname;
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
 
   if (loading) {
     return <Loader />;
