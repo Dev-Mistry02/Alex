@@ -1,9 +1,7 @@
 {
-  "name": "server",
+  "name": "alex-graphic-studio-server",
   "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
-  "author": "",
+  "description": "Backend API for ALEX Graphic Studio",
   "type": "module",
   "main": "server.js",
   "scripts": {

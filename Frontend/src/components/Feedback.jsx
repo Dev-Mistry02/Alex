@@ -6,7 +6,61 @@ const API_URL = (
     "https://alex-wdu9.onrender.com"
 ).replace(/\/+$/, "");
 
-const REQUEST_TIMEOUT = 15000;
+const REQUEST_TIMEOUT = 45000;
+const RETRY_DELAY = 1500;
+
+const wait = (duration) =>
+    new Promise((resolve) => setTimeout(resolve, duration));
+
+const requestFeedback = async (options = {}) => {
+    const { retries = 0, ...fetchOptions } = options;
+    let lastError;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+            () => controller.abort(),
+            REQUEST_TIMEOUT
+        );
+
+        try {
+            const response = await fetch(
+                `${API_URL}/api/feedback`,
+                {
+                    ...fetchOptions,
+                    signal: controller.signal,
+                    headers: {
+                        Accept: "application/json",
+                        ...fetchOptions.headers,
+                    },
+                }
+            );
+            const data = await response.json().catch(() => null);
+
+            if (
+                response.ok ||
+                ![502, 503, 504].includes(response.status) ||
+                attempt === retries
+            ) {
+                return { response, data };
+            }
+
+            await wait(RETRY_DELAY);
+        } catch (error) {
+            lastError = error;
+
+            if (attempt === retries) {
+                throw error;
+            }
+
+            await wait(RETRY_DELAY);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    throw lastError || new Error("Feedback request failed.");
+};
 
 const normalizeFeedback = (item) => {
     if (!item || !item.id) {
@@ -97,25 +151,14 @@ const Feedback = () => {
 
     useEffect(() => {
         let mounted = true;
-        const controller = new AbortController();
-        const timeout = setTimeout(
-            () => controller.abort(),
-            REQUEST_TIMEOUT
-        );
-
         const loadFeedback = async () => {
             setLoading(true);
             setError("");
 
             try {
-                const response = await fetch(
-                    `${API_URL}/api/feedback`,
-                    {
-                        signal: controller.signal,
-                        headers: { Accept: "application/json" },
-                    }
-                );
-                const data = await response.json().catch(() => null);
+                const { response, data } = await requestFeedback({
+                    retries: 2,
+                });
 
                 if (!response.ok) {
                     throw new Error(
@@ -150,7 +193,6 @@ const Feedback = () => {
                     setError(err.message || "Unable to load feedback right now.");
                 }
             } finally {
-                clearTimeout(timeout);
                 if (mounted) {
                     setLoading(false);
                 }
@@ -161,8 +203,6 @@ const Feedback = () => {
 
         return () => {
             mounted = false;
-            clearTimeout(timeout);
-            controller.abort();
         };
     }, []);
 
@@ -298,32 +338,21 @@ const Feedback = () => {
             return;
         }
 
-        const controller = new AbortController();
-        const timeout = setTimeout(
-            () => controller.abort(),
-            REQUEST_TIMEOUT
-        );
-
         try {
             setSubmitting(true);
 
-            const response = await fetch(
-                `${API_URL}/api/feedback`,
-                {
-                    method: "POST",
-                    signal: controller.signal,
-                    headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json",
-                    },
-                    body: JSON.stringify({
-                        name: cleanName,
-                        rating: Number(rating),
-                        message: cleanMessage,
-                    }),
-                }
-            );
-            const data = await response.json().catch(() => null);
+            const { response, data } = await requestFeedback({
+                retries: 2,
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    name: cleanName,
+                    rating: Number(rating),
+                    message: cleanMessage,
+                }),
+            });
 
             if (!response.ok) {
                 throw new Error(
@@ -357,7 +386,6 @@ const Feedback = () => {
                     : err.message || "Something went wrong. Please try again."
             );
         } finally {
-            clearTimeout(timeout);
             setSubmitting(false);
         }
     };

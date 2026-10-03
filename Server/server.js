@@ -15,71 +15,146 @@ const httpServer = createServer(app);
 
 const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 
+/* =========================================================
+   CORS
+========================================================= */
+
 const configuredClientUrls = (process.env.CLIENT_URL || "")
   .split(",")
   .map((url) => url.trim())
+  .map((url) => url.replace(/\/+$/, ""))
   .filter(Boolean);
 
-const isAllowedOrigin = (origin) =>
-  !origin ||
-  configuredClientUrls.length === 0 ||
-  /^https?:\/\/localhost:\d+$/.test(origin) ||
-  /^https?:\/\/127\.0\.0\.1:\d+$/.test(origin) ||
-  configuredClientUrls.includes(origin);
+const isAllowedOrigin = (origin) => {
+  // Requests such as Postman/curl/server-to-server
+  if (!origin) {
+    return true;
+  }
+
+  // If CLIENT_URL is not configured, allow temporarily.
+  if (configuredClientUrls.length === 0) {
+    return true;
+  }
+
+  // Local development
+  if (
+    /^https?:\/\/localhost:\d+$/.test(origin) ||
+    /^https?:\/\/127\.0\.0\.1:\d+$/.test(origin)
+  ) {
+    return true;
+  }
+
+  // Render / production frontend
+  return configuredClientUrls.includes(origin);
+};
+
+/*
+  Express CORS
+*/
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("CORS blocked origin:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+    ],
+
+    credentials: true,
+
+    optionsSuccessStatus: 204,
+  })
+);
+
+/* =========================================================
+   BODY PARSER
+========================================================= */
+
+app.use(
+  express.json({
+    limit: "1mb",
+  })
+);
+
+/* =========================================================
+   SOCKET.IO
+========================================================= */
 
 const io = new Server(httpServer, {
   cors: {
-    origin: isAllowedOrigin,
-    methods: ["GET", "POST", "DELETE", "PUT"],
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("Socket.IO CORS blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+
+    credentials: true,
   },
+
+  transports: ["polling", "websocket"],
 });
 
 app.set("io", io);
 
-
-
-app.use(
-  cors({
-    origin: isAllowedOrigin,
-    methods: ["GET", "POST", "DELETE", "PUT"],
-  })
-);
-
-app.use(express.json());
-
-
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
 
 app.get("/api/health", (req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
     message: "ALEX Graphic Studio API is running",
     database:
       mongoose.connection.readyState === 1
         ? "connected"
         : "unavailable",
+    timestamp: new Date().toISOString(),
   });
 });
 
+/* =========================================================
+   FEEDBACK ROUTES
+========================================================= */
 
 app.use("/api/feedback", feedbackRoutes);
 
+/* =========================================================
+   SOCKET CONNECTION
+========================================================= */
 
 io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+  console.log("Socket client connected:", socket.id);
 
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
+  socket.on("disconnect", (reason) => {
+    console.log(
+      "Socket client disconnected:",
+      socket.id,
+      reason
+    );
   });
 });
 
+/* =========================================================
+   MONGODB CHANGE STREAM
+========================================================= */
+
 const startMongoChangeStream = async () => {
   try {
-    /*
-    ----------------------------------------
-    Check Mongoose connection
-    ----------------------------------------
-    */
-
     if (mongoose.connection.readyState !== 1) {
       throw new Error(
         `MongoDB connection is not ready. ReadyState: ${mongoose.connection.readyState}`
@@ -98,31 +173,13 @@ const startMongoChangeStream = async () => {
       "Starting MongoDB feedback change stream..."
     );
 
-    /*
-    ----------------------------------------
-    Feedback collection
-    ----------------------------------------
-    */
-
     const feedbackCollection =
       db.collection("feedback");
-
-    /*
-    ----------------------------------------
-    Start Change Stream
-    ----------------------------------------
-    */
 
     const changeStream =
       feedbackCollection.watch([], {
         fullDocument: "updateLookup",
       });
-
-    /*
-    ========================================
-    CHANGE EVENT
-    ========================================
-    */
 
     changeStream.on("change", async (change) => {
       try {
@@ -131,11 +188,9 @@ const startMongoChangeStream = async () => {
           change.operationType
         );
 
-        /*
-        ====================================
-        INSERT
-        ====================================
-        */
+        /* =================================================
+           INSERT
+        ================================================= */
 
         if (change.operationType === "insert") {
           const doc = change.fullDocument;
@@ -144,7 +199,6 @@ const startMongoChangeStream = async () => {
             return;
           }
 
-          // Only emit approved feedback
           if (doc.approved === false) {
             return;
           }
@@ -155,17 +209,16 @@ const startMongoChangeStream = async () => {
             rating: doc.rating,
             message: doc.message,
             approved: doc.approved,
-            created_at: doc.createdAt,
+            created_at:
+              doc.createdAt || new Date(),
           });
 
           return;
         }
 
-        /*
-        ====================================
-        DELETE
-        ====================================
-        */
+        /* =================================================
+           DELETE
+        ================================================= */
 
         if (change.operationType === "delete") {
           const deletedId =
@@ -175,11 +228,6 @@ const startMongoChangeStream = async () => {
             return;
           }
 
-          console.log(
-            "Feedback deleted:",
-            deletedId
-          );
-
           io.emit("feedback:deleted", {
             id: deletedId,
           });
@@ -187,11 +235,9 @@ const startMongoChangeStream = async () => {
           return;
         }
 
-        /*
-        ====================================
-        UPDATE
-        ====================================
-        */
+        /* =================================================
+           UPDATE
+        ================================================= */
 
         if (change.operationType === "update") {
           const updatedId =
@@ -200,12 +246,6 @@ const startMongoChangeStream = async () => {
           if (!updatedId) {
             return;
           }
-
-          /*
-          ------------------------------------
-          Get updated document
-          ------------------------------------
-          */
 
           const updatedDocument =
             await feedbackCollection.findOne({
@@ -216,13 +256,9 @@ const startMongoChangeStream = async () => {
             return;
           }
 
-          /*
-          ------------------------------------
-          If feedback is not approved
-          ------------------------------------
-          */
-
-          if (updatedDocument.approved === false) {
+          if (
+            updatedDocument.approved === false
+          ) {
             io.emit("feedback:updated", {
               id: updatedId.toString(),
               approved: false,
@@ -231,12 +267,6 @@ const startMongoChangeStream = async () => {
             return;
           }
 
-          /*
-          ------------------------------------
-          Approved feedback
-          ------------------------------------
-          */
-
           io.emit("feedback:updated", {
             id: updatedDocument._id.toString(),
             name: updatedDocument.name,
@@ -244,10 +274,9 @@ const startMongoChangeStream = async () => {
             message: updatedDocument.message,
             approved: updatedDocument.approved,
             created_at:
-              updatedDocument.createdAt,
+              updatedDocument.createdAt ||
+              new Date(),
           });
-
-          return;
         }
       } catch (error) {
         console.error(
@@ -257,12 +286,6 @@ const startMongoChangeStream = async () => {
       }
     });
 
-    /*
-    ========================================
-    CHANGE STREAM ERROR
-    ========================================
-    */
-
     changeStream.on("error", (error) => {
       console.error(
         "MongoDB Change Stream Error:",
@@ -270,23 +293,11 @@ const startMongoChangeStream = async () => {
       );
     });
 
-    /*
-    ========================================
-    CHANGE STREAM CLOSE
-    ========================================
-    */
-
     changeStream.on("close", () => {
       console.log(
         "MongoDB Change Stream closed."
       );
     });
-
-    /*
-    ========================================
-    SUCCESS
-    ========================================
-    */
 
     console.log(
       "MongoDB realtime change stream active."
@@ -299,53 +310,84 @@ const startMongoChangeStream = async () => {
       error
     );
 
-    /*
-    ----------------------------------------
-    Don't crash the entire server
-    ----------------------------------------
-    */
-
     return null;
   }
 };
 
-/*
-========================================
-START SERVER
-========================================
-*/
+/* =========================================================
+   MONGODB CONNECTION
+========================================================= */
 
-const startServer = async () => {
-  httpServer.once("error", (error) => {
-    console.error(
-      `Unable to start the server on port ${PORT}:`,
-      error
+let mongoRetryTimer = null;
+let mongoChangeStreamStarted = false;
+
+const connectMongoAndRealtime = async () => {
+  try {
+    await connectDb();
+
+    console.log(
+      "MongoDB connected successfully"
     );
-    process.exit(1);
-  });
 
-  httpServer.listen(PORT, "0.0.0.0", async () => {
-    console.log(`Server running at PORT:${PORT}`);
-    console.log(`API: http://localhost:${PORT}`);
-    console.log(`Socket.IO realtime enabled`);
+    if (!mongoChangeStreamStarted) {
+      const changeStream =
+        await startMongoChangeStream();
 
-    try {
-      await connectDb();
-      console.log("MongoDB connected successfully");
-      await startMongoChangeStream();
-    } catch (error) {
-      console.error(
-        "MongoDB startup failed. API remains available:",
-        error
-      );
+      mongoChangeStreamStarted =
+        Boolean(changeStream);
     }
-  });
+  } catch (error) {
+    console.error(
+      "MongoDB startup failed:",
+      error.message
+    );
+
+    clearTimeout(mongoRetryTimer);
+
+    mongoRetryTimer = setTimeout(() => {
+      connectMongoAndRealtime();
+    }, 5000);
+  }
 };
 
-/*
-========================================
-RUN
-========================================
-*/
+/* =========================================================
+   START SERVER
+========================================================= */
 
-startServer();
+httpServer.on("error", (error) => {
+  console.error(
+    "HTTP server error:",
+    error
+  );
+});
+
+httpServer.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `ALEX API running on port ${PORT}`
+    );
+
+    console.log(
+      `Health: /api/health`
+    );
+
+    console.log(
+      `Feedback: /api/feedback`
+    );
+
+    console.log(
+      "Socket.IO realtime enabled"
+    );
+
+    console.log(
+      "Allowed frontend origins:",
+      configuredClientUrls.length
+        ? configuredClientUrls
+        : "ALL (CLIENT_URL not configured)"
+    );
+
+    connectMongoAndRealtime();
+  }
+);
